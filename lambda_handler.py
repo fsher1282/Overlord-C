@@ -1,27 +1,21 @@
+import json
 import boto3
-
+from botocore.exceptions import ClientError
 
 def send_batch_job(job_definition, job_name, job_queue, container_overides):
-    # Function uses boto3 to programmatically launch Batch job with input
-
+    # Function uses boto3 to programatically launch Batch job with input
+    
     client = boto3.client('batch')
     try:
-        # If there are no inputs in Batch job
-        if container_overides == {}:
-            response = client.submit_job(
-                jobDefinition=job_definition,
-                jobName=job_name,
-                jobQueue=job_queue)
-
-        else:
-            # If there are inputs in Batch job
-            response = client.submit_job(
-                jobDefinition=job_definition,
-                jobName=job_name,
-                jobQueue=job_queue,
-                containerOverrides=container_overides)
-
-        # Successfully submitted
+       
+        # If there are inputs in Batch job
+        response = client.submit_job(
+            jobDefinition=job_definition,
+            jobName=job_name,
+            jobQueue=job_queue,
+            containerOverrides=container_overides)
+        
+        # Succesfully submitted
         return {
             "status": 0,
             "data": {
@@ -40,24 +34,50 @@ def send_batch_job(job_definition, job_name, job_queue, container_overides):
         }
 
 
+
 def lambda_handler(event, context):
     """
-    Lambda handler receives input from MongoDB event and preprocess data to
-    send it to launch Batch job
+    Lambda handler receives input from MongoDB event and retrieve secrets from AWS 
+    Secret Manager to launch Batch job
     """
+    
+    secret_name = "MongoDB_Creds"
+    region_name = "us-west-1"
 
-    # Extract data from MongoDB event and get collection
-    data = event['detail']['fullDocument']
+    # Create a Secrets Manager client
+    session = boto3.session.Session()
+    client = session.client(
+        service_name='secretsmanager',
+        region_name=region_name
+    )
 
-    # Get key value from Mongo Collection
-    PD_DATA = data['Query']
+    try:
+        get_secret_value_response = client.get_secret_value(
+            SecretId=secret_name
+        )
+    except ClientError as e:
+        # For a list of exceptions thrown, see
+        # https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_GetSecretValue.html
+        raise e
 
-    overrides = {'environment': [
-        {
-            'name': 'Query',
-            'value': PD_DATA,
-        }
-    ]
+    # Decrypts secret using the associated KMS key.
+    secret = get_secret_value_response['SecretString']
+    username = secret['DB_USER']
+    password = secret['DB_PASSWORD']
+    
+    print(secret)
+    overides = {'environment': [
+            {
+               'name': 'DB_USER',
+               'value': username,
+            },
+            
+            {
+               'name': 'DB_PASSWORD',
+               'value': password,
+            }
+        ]
     }
-    send_job = send_batch_job(job_definition='', job_name='', job_queue='', container_overides=overrides)
-    print(send_job)
+    sendJob = send_batch_job(job_definition, job_name, job_queue, overides)
+    print(sendJob)
+    
